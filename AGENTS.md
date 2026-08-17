@@ -49,6 +49,7 @@ src/
 | 动权限 / 角色 / 菜单任何东西 | `docs/rbac.md` |
 | 新增接口、模块、DTO | `docs/conventions.md` |
 | 理解架构 / 排查请求问题 | `docs/architecture.md` |
+| PG / Redis 是什么、怎么连怎么运维 | `docs/infra.md` |
 | 配环境变量 / 部署 / CI | `docs/env.md` + `docs/ci-cd.md` |
 
 ## 治理约定
