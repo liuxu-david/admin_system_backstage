@@ -3,6 +3,8 @@ export interface AppConfig {
   name: string;
   port: number;
   prefix: string;
+  /** CORS 允许的来源列表；为空数组时开发/测试环境放开、生产关闭 */
+  corsOrigins: string[];
 }
 
 export interface DbConfig {

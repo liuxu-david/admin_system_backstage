@@ -37,11 +37,11 @@ export enum ErrorCode {
   ROLE_NOT_FOUND = 20501,
   ROLE_CODE_TAKEN = 20502,
   ROLE_IS_SYSTEM = 20503,
-  PERMISSION_NOT_FOUND = 20504,
   MENU_NOT_FOUND = 20505,
   MENU_PARENT_INVALID = 20506,
   RBAC_PERMISSION_DENIED = 20507,
   MENU_CODE_TAKEN = 20508,
+  MENU_PERMISSION_INVALID = 20509,
 }
 
 export const ERROR_MESSAGES: Record<ErrorCode, string> = {
@@ -75,11 +75,11 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.ROLE_NOT_FOUND]: "Role not found",
   [ErrorCode.ROLE_CODE_TAKEN]: "Role code already taken",
   [ErrorCode.ROLE_IS_SYSTEM]: "Built-in role cannot be modified or deleted",
-  [ErrorCode.PERMISSION_NOT_FOUND]: "Permission not found",
   [ErrorCode.MENU_NOT_FOUND]: "Menu not found",
   [ErrorCode.MENU_PARENT_INVALID]: "Menu parent is invalid or creates a cycle",
   [ErrorCode.RBAC_PERMISSION_DENIED]: "Permission denied",
   [ErrorCode.MENU_CODE_TAKEN]: "Menu code already taken",
+  [ErrorCode.MENU_PERMISSION_INVALID]: "Menu permission code does not exist",
 };
 
 export const ERROR_HTTP_STATUS: Partial<Record<ErrorCode, HttpStatus>> = {
@@ -112,9 +112,9 @@ export const ERROR_HTTP_STATUS: Partial<Record<ErrorCode, HttpStatus>> = {
   [ErrorCode.ROLE_NOT_FOUND]: HttpStatus.NOT_FOUND,
   [ErrorCode.ROLE_CODE_TAKEN]: HttpStatus.CONFLICT,
   [ErrorCode.ROLE_IS_SYSTEM]: HttpStatus.FORBIDDEN,
-  [ErrorCode.PERMISSION_NOT_FOUND]: HttpStatus.NOT_FOUND,
   [ErrorCode.MENU_NOT_FOUND]: HttpStatus.NOT_FOUND,
   [ErrorCode.MENU_PARENT_INVALID]: HttpStatus.BAD_REQUEST,
   [ErrorCode.RBAC_PERMISSION_DENIED]: HttpStatus.FORBIDDEN,
   [ErrorCode.MENU_CODE_TAKEN]: HttpStatus.CONFLICT,
+  [ErrorCode.MENU_PERMISSION_INVALID]: HttpStatus.BAD_REQUEST,
 };

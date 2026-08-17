@@ -3,9 +3,8 @@ import { ArrayMinSize, IsArray, IsString } from "class-validator";
 
 /**
  * 通用「分配 id 列表」入参，用于：
- * - PUT /rbac/roles/:id/permissions  （给角色分配接口权限）
- * - PUT /rbac/roles/:id/menus        （给角色分配菜单）
- * - PUT /rbac/users/:id/roles        （给用户分配角色）
+ * - PUT /rbac/roles/:id/menus  （给角色分配菜单，权限码随勾选节点派生）
+ * - PUT /rbac/users/:id/roles  （给用户分配角色）
  * 传空数组表示清空。
  */
 export class AssignIdsDto {

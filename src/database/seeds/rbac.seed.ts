@@ -7,8 +7,8 @@
  * 产物：
  *  1. 角色 super_admin(内置) / member / guest
  *  2. 权限点（与 Controller 上的 @RequirePermissions 对应）
- *  3. 完整菜单树（含按钮节点）
- *  4. super_admin 拥有全部权限 + 全部菜单
+ *  3. 完整菜单树（页面/按钮节点挂权限码——角色勾了节点即拥有其权限）
+ *  4. super_admin 拥有全部菜单（权限随菜单派生）
  *  5. 初始账号 admin@admin.com / Admin@123456（挂 super_admin）
  */
 import dataSource from "../data-source";
@@ -51,8 +51,6 @@ const PERMISSIONS = [
   { code: "menu:read", name: "查看菜单", module: "menu", action: "read" },
   { code: "menu:update", name: "编辑菜单", module: "menu", action: "update" },
   { code: "menu:delete", name: "删除菜单", module: "menu", action: "delete" },
-  // permission
-  { code: "permission:read", name: "查看权限", module: "permission", action: "read" },
 ];
 
 type MenuSeed = {
@@ -69,15 +67,7 @@ type MenuSeed = {
 };
 
 const MENU_TREE: MenuSeed[] = [
-  {
-    name: "首页",
-    code: "dashboard",
-    type: MenuType.MENU,
-    path: "/dashboard",
-    component: "dashboard/index",
-    icon: "Odometer",
-    sort: 1,
-  },
+  // 首页不在菜单表里：它是前端静态路由，所有登录用户都有（若依/大厂通行做法）
   {
     name: "系统管理",
     code: "system",
@@ -94,6 +84,7 @@ const MENU_TREE: MenuSeed[] = [
         path: "/system/user",
         component: "system/user/index",
         icon: "User",
+        permission: "user:read",
         sort: 1,
         children: [
           {
@@ -133,6 +124,7 @@ const MENU_TREE: MenuSeed[] = [
         path: "/system/role",
         component: "system/role/index",
         icon: "UserFilled",
+        permission: "role:read",
         sort: 2,
         children: [
           {
@@ -172,6 +164,7 @@ const MENU_TREE: MenuSeed[] = [
         path: "/system/menu",
         component: "system/menu/index",
         icon: "Menu",
+        permission: "menu:read",
         sort: 3,
         children: [
           {
@@ -215,6 +208,7 @@ const MENU_TREE: MenuSeed[] = [
         path: "/project/list",
         component: "project/list/index",
         icon: "Document",
+        permission: "project:read",
         sort: 1,
         children: [
           {
@@ -246,8 +240,11 @@ const MENU_TREE: MenuSeed[] = [
 
 async function main() {
   await dataSource.initialize();
-  // 全新库时自动按实体建表（开发环境免迁移）。生产环境请用 pnpm migration:* 管理。
-  await dataSource.synchronize();
+  // 仅本地开发（pnpm seed 时 SEED_SYNCHRONIZE=true）允许自动建表；
+  // 服务器上灌数据必须走 migration，绝不能 synchronize 改共享库的表结构。
+  if (process.env.SEED_SYNCHRONIZE === "true") {
+    await dataSource.synchronize();
+  }
   const roleRepo = dataSource.getRepository(Role);
   const permRepo = dataSource.getRepository(Permission);
   const menuRepo = dataSource.getRepository(Menu);
@@ -271,14 +268,9 @@ async function main() {
   }
 
   console.log("→ 权限点");
-  const permByCode = new Map<string, Permission>();
   for (const p of PERMISSIONS) {
-    let perm = await permRepo.findOne({ where: { code: p.code } });
-    if (!perm) {
-      perm = permRepo.create(p);
-      await permRepo.save(perm);
-    }
-    permByCode.set(p.code, perm);
+    const exists = await permRepo.findOne({ where: { code: p.code } });
+    if (!exists) await permRepo.save(permRepo.create(p));
   }
 
   console.log("→ 菜单树");
@@ -305,26 +297,39 @@ async function main() {
     return entity;
   };
   for (const m of MENU_TREE) await insertMenu(m, null);
+
+  // 老库回填：页面菜单节点补挂 read 权限码（新库 insertMenu 已带）
+  // 勾了页面 = 能调它的查询接口，这是权限派生的前提
+  const READ_PERM_BY_MENU_CODE: Record<string, string> = {
+    "system:user": "user:read",
+    "system:role": "role:read",
+    "system:menu": "menu:read",
+    "project:list": "project:read",
+  };
+  for (const [menuCode, permCode] of Object.entries(READ_PERM_BY_MENU_CODE)) {
+    await menuRepo
+      .createQueryBuilder()
+      .update(Menu)
+      .set({ permission: permCode })
+      .where("code = :code AND (permission IS NULL OR permission = '')", { code: menuCode })
+      .execute();
+  }
+
   const allMenus = await menuRepo.find();
 
-  console.log("→ 给 super_admin 分配全部权限 + 全部菜单");
+  console.log("→ 给 super_admin 分配全部菜单（权限随菜单派生）");
   const superAdmin = roleByCode.get("super_admin")!;
-  superAdmin.permissions = [...permByCode.values()];
   superAdmin.menus = allMenus;
   await roleRepo.save(superAdmin);
 
-  console.log("→ member：项目只读 + 仪表盘/项目菜单");
+  console.log("→ member：项目菜单（project:list 带 project:read）");
   const member = roleByCode.get("member")!;
-  member.permissions = [permByCode.get("project:read")!].filter(Boolean);
-  member.menus = allMenus.filter(
-    (m: Menu) => m.code === "dashboard" || m.code === "project" || m.code === "project:list",
-  );
+  member.menus = allMenus.filter((m: Menu) => m.code === "project" || m.code === "project:list");
   await roleRepo.save(member);
 
-  console.log("→ guest：仅仪表盘");
+  console.log("→ guest：无业务菜单（仅前端静态首页）");
   const guest = roleByCode.get("guest")!;
-  guest.permissions = [];
-  guest.menus = allMenus.filter((m: Menu) => m.code === "dashboard");
+  guest.menus = [];
   await roleRepo.save(guest);
 
   console.log("→ 初始管理员账号");

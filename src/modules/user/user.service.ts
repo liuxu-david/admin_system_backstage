@@ -50,7 +50,12 @@ export class UserService {
 
   async update(id: string, dto: UpdateUserDto): Promise<User> {
     const user = await this.findOne(id);
-    Object.assign(user, dto);
+    // 显式字段赋值（别 Object.assign）：dto.password 是明文，实体列是 password_hash，必须走 hash
+    if (dto.password !== undefined) {
+      user.passwordHash = await hashPassword(dto.password);
+    }
+    if (dto.email !== undefined) user.email = dto.email;
+    if (dto.nickname !== undefined) user.nickname = dto.nickname;
     return this.userRepository.save(user);
   }
 

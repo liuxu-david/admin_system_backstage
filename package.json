@@ -23,7 +23,7 @@
     "migration:run": "pnpm typeorm migration:run",
     "migration:revert": "pnpm typeorm migration:revert",
     "migration:show": "pnpm typeorm migration:show",
-    "seed": "cross-env APP_ENV=dev ts-node -r tsconfig-paths/register src/database/seeds/rbac.seed.ts"
+    "seed": "cross-env APP_ENV=dev SEED_SYNCHRONIZE=true ts-node -r tsconfig-paths/register src/database/seeds/rbac.seed.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

@@ -76,11 +76,11 @@ export class RbacService {
     return this.roleRepo.find({ order: { sort: "ASC", createdAt: "ASC" } });
   }
 
-  /** 角色详情：带已分配的 permissions / menus（供分配弹窗回显） */
+  /** 角色详情：带已勾选的 menus（供分配弹窗回显） */
   async findRoleDetail(id: string): Promise<Role> {
     const role = await this.roleRepo.findOne({
       where: { id },
-      relations: { permissions: true, menus: true },
+      relations: { menus: true },
     });
     if (!role) throw new BusinessException(ErrorCode.ROLE_NOT_FOUND);
     return role;
@@ -117,17 +117,7 @@ export class RbacService {
     await this.permissionService.invalidateUsers(userIds);
   }
 
-  // ─── 角色 ↔ 权限 / 菜单 分配 ───────────────────────────────────
-  async assignRolePermissions(roleId: string, permissionIds: string[]): Promise<void> {
-    const role = await this.findRoleEntity(roleId);
-    const perms = permissionIds.length
-      ? await this.permRepo.find({ where: { id: In(permissionIds) } })
-      : [];
-    role.permissions = perms;
-    await this.roleRepo.save(role);
-    await this.permissionService.invalidateUsers(await this.getUserIdsOfRole(roleId));
-  }
-
+  // ─── 角色 ↔ 菜单 分配（权限码从勾选的菜单节点派生，见 PermissionService）──
   async assignRoleMenus(roleId: string, menuIds: string[]): Promise<void> {
     const role = await this.findRoleEntity(roleId);
     const menus = menuIds.length ? await this.menuRepo.find({ where: { id: In(menuIds) } }) : [];
@@ -166,6 +156,7 @@ export class RbacService {
 
   async createMenu(dto: CreateMenuDto): Promise<Menu> {
     await this.assertParentValid(dto.parentId ?? null);
+    await this.assertPermissionExists(dto.permission ?? null);
     const exists = await this.menuRepo.findOne({ where: { code: dto.code } });
     if (exists) throw new BusinessException(ErrorCode.MENU_CODE_TAKEN);
 
@@ -191,6 +182,9 @@ export class RbacService {
     if (dto.parentId !== undefined) {
       // 不允许把菜单挂到自己或自己的后代下（形成环）
       await this.assertParentValid(dto.parentId ?? null, id);
+    }
+    if (dto.permission !== undefined) {
+      await this.assertPermissionExists(dto.permission ?? null);
     }
     Object.assign(menu, dto);
     const saved = await this.menuRepo.save(menu);
@@ -233,6 +227,13 @@ export class RbacService {
   private async getUserIdsOfRole(roleId: string): Promise<string[]> {
     const role = await this.roleRepo.findOne({ where: { id: roleId }, relations: { users: true } });
     return (role?.users ?? []).map((u) => u.id);
+  }
+
+  /** 校验菜单挂的权限码在 permissions 表里真实存在（错码 = 勾了也不生效，必须在保存时就拦下） */
+  private async assertPermissionExists(code: string | null): Promise<void> {
+    if (!code) return;
+    const perm = await this.permRepo.findOne({ where: { code } });
+    if (!perm) throw new BusinessException(ErrorCode.MENU_PERMISSION_INVALID);
   }
 
   /** 校验父菜单存在；若指定 selfId，确保不挂到自身或后代下（防环） */

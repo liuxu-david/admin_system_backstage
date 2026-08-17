@@ -31,3 +31,6 @@ pnpm-debug.log*
 
 # Misc
 .tsbuildinfo
+
+# IDE 计划文件
+.zcode/

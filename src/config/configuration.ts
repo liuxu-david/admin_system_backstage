@@ -4,6 +4,11 @@ export default () => ({
     name: process.env.APP_NAME || "nest-backend",
     port: parseInt(process.env.APP_PORT || "3000", 10),
     prefix: process.env.APP_PREFIX || "api",
+    // 逗号分隔，如 https://staging.example.com,https://admin.example.com
+    corsOrigins: (process.env.CORS_ORIGINS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
   },
   db: {
     host: process.env.DB_HOST || "localhost",

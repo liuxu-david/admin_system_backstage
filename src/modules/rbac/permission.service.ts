@@ -14,6 +14,8 @@ const CACHE_TTL_SECONDS = 1800;
 
 /**
  * 权限加载/缓存服务。
+ * 权限码唯一来源是「角色勾选的菜单节点上的 permission 字段」（读时派生，不落关联表）——
+ * 菜单怎么勾，权限就怎么变，永不漂移。
  * 权限是「读多写极少」（每个请求都查），用 Redis 缓存 30 分钟。
  * 任何「分配/收回」操作后必须调用 invalidateUser，否则收回不生效。
  */
@@ -32,13 +34,16 @@ export class PermissionService {
 
     const user = await this.userRepo.findOne({
       where: { id: userId },
-      relations: { roles: { permissions: true } },
+      relations: { roles: { menus: true } },
     });
     if (!user) return [];
 
+    // menu / button 类型节点都可挂 permission 码；勾了节点即授予其权限
     const codes = new Set<string>();
     for (const role of user.roles ?? []) {
-      for (const perm of role.permissions ?? []) codes.add(perm.code);
+      for (const menu of role.menus ?? []) {
+        if (menu.permission) codes.add(menu.permission);
+      }
     }
     const list = [...codes];
     if (list.length) await this.redis.sadd(cacheKey, ...list);

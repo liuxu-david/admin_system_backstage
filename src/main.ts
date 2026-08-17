@@ -53,9 +53,10 @@ async function bootstrap() {
   // Global interceptor - unified success response
   app.useGlobalInterceptors(new ResponseInterceptor());
 
-  // CORS
+  // CORS：设了 CORS_ORIGINS 就按白名单来（预发/生产必须设）；否则开发/测试放开、生产关闭
+  const corsOrigins = configService.get<string[]>("app.corsOrigins", []);
   app.enableCors({
-    origin: appEnv === "prod" ? false : true,
+    origin: corsOrigins.length > 0 ? corsOrigins : appEnv !== "prod",
     credentials: true,
   });
 

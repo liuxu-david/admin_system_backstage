@@ -1,10 +1,14 @@
 node_modules
 dist
 coverage
-.env.local
-.env.*.local
+test
+.env
+.env.*
+!.env.example
 *.log
 .git
 .idea
 .vscode
+.zcode
 uploads
+docker-compose.yml

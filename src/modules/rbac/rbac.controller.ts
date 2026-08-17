@@ -33,8 +33,8 @@ export class RbacController {
   constructor(private readonly rbacService: RbacService) {}
 
   // ─── 权限 ───────────────────────────────────────────────
+  /** 权限码字典（菜单表单下拉用）。只是参考数据，登录即可读 */
   @Get("permissions")
-  @RequirePermissions("permission:read")
   @ApiOperation({ summary: "权限点列表" })
   findAllPermissions() {
     return this.rbacService.findAllPermissions();
@@ -78,22 +78,10 @@ export class RbacController {
     return null;
   }
 
-  @Put("roles/:id/permissions")
-  @HttpCode(HttpStatus.OK)
-  @RequirePermissions("role:assign")
-  @ApiOperation({ summary: "给角色分配接口权限" })
-  async assignRolePermissions(
-    @Param("id", new ParseUUIDPipe()) id: string,
-    @Body() dto: AssignIdsDto,
-  ) {
-    await this.rbacService.assignRolePermissions(id, dto.ids);
-    return null;
-  }
-
   @Put("roles/:id/menus")
   @HttpCode(HttpStatus.OK)
   @RequirePermissions("role:assign")
-  @ApiOperation({ summary: "给角色分配菜单" })
+  @ApiOperation({ summary: "给角色分配菜单（勾选的节点同时决定角色拥有的权限码）" })
   async assignRoleMenus(@Param("id", new ParseUUIDPipe()) id: string, @Body() dto: AssignIdsDto) {
     await this.rbacService.assignRoleMenus(id, dto.ids);
     return null;

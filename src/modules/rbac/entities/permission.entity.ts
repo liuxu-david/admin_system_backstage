@@ -1,11 +1,10 @@
-import { Column, Entity, Index, ManyToMany } from "typeorm";
+import { Column, Entity, Index } from "typeorm";
 
 import { BaseEntity } from "../../../foundation/entities/base.entity";
-import { Role } from "./role.entity";
 
 /**
- * 接口权限点。code = module + ":" + action，几乎对应后端一个 Controller 方法。
- * 例：project:create、user:delete、scene:publish。
+ * 权限码字典（module:action），给菜单节点挂载时做校验和下拉选择用。
+ * 不参与任何关联表——角色的权限 = 勾选的菜单节点上的 permission 字段读时派生。
  */
 @Entity("permissions")
 export class Permission extends BaseEntity {
@@ -24,7 +23,4 @@ export class Permission extends BaseEntity {
 
   @Column({ type: "varchar", length: 255, nullable: true })
   description!: string | null;
-
-  @ManyToMany(() => Role, (role) => role.permissions)
-  roles!: Role[];
 }
