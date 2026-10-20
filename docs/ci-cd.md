@@ -1,139 +1,97 @@
-# CI/CD 与部署手册（运维小白版·后端）
+# 后端 CI/CD：GitHub Actions 与隔离测试环境
 
-> 目标：从上往下照着做，做完后「推代码到 GitLab → 测试服务器自动更新」全链路打通。
-> 现状：代码存 GitHub；CI/CD 和部署用**自建 GitLab**（代码要再推一份过去，两边不冲突）。
-> 前端是独立仓库，公共设施（本篇第 1、2 节）搭好后前端直接复用，见前端仓库 docs/ci-cd.md。
-> 每个命令块下面都有「✅ 验证」，能对上就说明这步成了，再走下一步。
+> 实施文件已在本地；未提交／推送不等于 GitHub 已启用。完整亲手操作教程：[deploy/README.md](../deploy/README.md)。
+> 并列工作区也可读 [根 DEPLOY.md](../../DEPLOY.md)；父目录不是 Git 仓库，该根教程不随本仓库上传。
 
-## 0. 全景：需要准备的四样东西
+## 1. 入口与默认行为
 
-| # | 东西 | 是什么 | 放哪 |
-|---|---|---|---|
-| 1 | Linux 服务器 | 真正跑你后端+数据库的机器（2核4G 起） | 云上买 |
-| 2 | GitLab 实例 | 自建的公司代码平台，负责跑流水线、存 Docker 镜像 | 一台机器（可与 1 同台，建议内存≥4G） |
-| 3 | GitLab Runner | 干活的工人，GitLab 派任务给它（检查代码/打镜像） | 装在 1 或 2 上 |
-| 4 | Container Registry | GitLab 自带的镜像仓库 | GitLab 自带，配置开启即可 |
+工作流：[`.github/workflows/ci-cd.yml`](../.github/workflows/ci-cd.yml)。仓库 origin 为 `liuxu-david/admin_system_backstage`，工作分支 `chore/github-actions-test` 待用户 review／commit／push／PR 到 main。
 
-```
-你 push 代码到 GitLab → Runner 自动：检查(tsc/测试) → 打 Docker 镜像推到 Registry
-→ SSH 到服务器 docker compose pull + 重启 → curl /health 确认活着
-```
-
-> **PG 和 Redis 不需要单独安装**——部署编排自带这两个容器，跟后端一起拉起，你要做的只是在 `.env` 里填好连接密码（第 3 节）。
-> 它们是什么、怎么连进去看数据、怎么备份/清缓存，见同目录 **[infra.md](infra.md)**（写给前端转全栈的基础设施手册）。
-
-## 1. 准备 Linux 服务器（一次性）
-
-```bash
-ssh root@服务器IP                       # 云厂商控制台拿 IP 和密码
-curl -fsSL https://get.docker.com | sh  # 装 Docker（含 compose 插件）
-```
-✅ 验证：`docker -v` 出版本号，`docker compose version` 出版本号。
-
-**（可选）这台机上直接装 GitLab**——公司已有 GitLab 就跳过这步：
-```bash
-# 装法A：apt 安装（官方源）
-curl -s https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.deb.sh | sudo bash
-sudo EXTERNAL_URL="http://gitlab.你的IP" apt install gitlab-ce
-# 装法B：docker 跑（机器上已有 docker 时更省心）
-docker run -d --name gitlab --hostname gitlab.你的IP -p 80:80 -p 2222:22 \
-  -v /srv/gitlab/config:/etc/gitlab -v /srv/gitlab/logs:/var/log/gitlab \
-  -v /srv/gitlab/data:/var/opt/gitlab --restart always gitlab/gitlab-ce:latest
-```
-✅ 验证：浏览器打开 `http://gitlab.你的IP` 能看到登录页；首次 root 密码在服务器 `/etc/gitlab/initial_root_password`（24h 内有效，登录后改掉）。
-
-## 2. GitLab 侧准备（一次性）
-
-1. **建项目**：GitLab 建组（如 `admin`）→ 新建空项目 `admin-backend`（**不要**勾选 Initialize with README）。
-2. **推代码**（在你电脑的项目目录）：
-   ```bash
-   git remote add gitlab http://gitlab.你的IP/admin/admin-backend.git
-   git push gitlab main            # 顺便把 develop 也推上去：git push gitlab develop
-   ```
-3. **开 Registry**（apt 装法）：编辑 `/etc/gitlab/gitlab.rb` 加一行 `registry_external_url "http://gitlab.你的IP:5050"`，然后 `sudo gitlab-ctl reconfigure`。
-   ✅ 验证：项目左侧出现 **Packages & Registries → Container Registry** 且能打开。
-4. **装并注册 Runner**（在服务器上）：
-   ```bash
-   curl -L https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh | sudo bash
-   sudo apt install gitlab-runner
-   # token 在 GitLab 项目 → Settings → CI/CD → Runners → 点"New project runner"生成
-   sudo gitlab-runner register --url http://gitlab.你的IP --token glrt-xxxx \
-     --executor docker --docker-image docker:27 --docker-privileged
-   ```
-   （`--docker-privileged` 必须带：流水线里要构建 Docker 镜像，没权限会失败）
-   ✅ 验证：Settings → CI/CD → Runners 页面，你的 runner 显示绿点 Online。
-5. **配 SSH 部署密钥**（让流水线能登录服务器执行命令）：
-   ```bash
-   # 你电脑上生成一对密钥（一路回车）
-   ssh-keygen -t ed25519 -f deploy_key -N ""
-   cat deploy_key.pub >> root@服务器:~/.ssh/authorized_keys   # 公钥放服务器
-   ```
-6. **配 CI 变量**：GitLab 项目 → Settings → CI/CD → Variables → 逐个 Add：
-
-| 变量名 | 值 | 说明 |
-|---|---|---|
-| TEST_SSH_HOST | 服务器IP | 测试服务器 |
-| TEST_SSH_USER | root | 登录账号 |
-| TEST_SSH_KEY | deploy_key 文件的**全部内容** | Type 选 Variable |
-| TEST_DEPLOY_DIR | /opt/admin-backend-test | 服务器上的部署目录 |
-
-7. **服务器上登录 Registry**（拉镜像要凭证）：GitLab 项目 → Settings → Repository → Deploy tokens → 新建（勾 `read_registry`），拿到用户名/密码后在服务器执行：
-   ```bash
-   docker login gitlab.你的IP:5050 -u 部署token用户名 -p 部署token密码
-   ```
-
-## 3. 服务器上准备部署目录（每环境一次）
-
-```bash
-mkdir -p /opt/admin-backend-test && cd /opt/admin-backend-test
-cat > .env <<'EOF'
-DB_USERNAME=postgres
-DB_PASSWORD=改成一个强密码
-DB_NAME=nest_backend_test
-REDIS_PASSWORD=
-JWT_ACCESS_SECRET=换强随机值（ssh上执行 openssl rand -hex 32 生成）
-JWT_REFRESH_SECRET=再生成一个不同的
-APP_BIND=127.0.0.1
-APP_PORT=3000
-EOF
-chmod 600 .env
-```
-> `.env` 是这台环境的真实密码，**不进 git**；compose 文件由流水线每次部署自动同步过去。
-> PG/Redis 各变量的含义与安全说明见 [infra.md](infra.md) 第 3 节。
-
-## 4. 第一次部署
-
-```bash
-# 你电脑上：切到 develop 推一下（或提个 MR 合入 develop）
-git checkout develop && git push gitlab develop
-```
-→ GitLab 项目 → Build → Pipelines 看流水线跑：check → package → deploy:test 全绿。
-✅ 验证：服务器上 `curl http://127.0.0.1:3000/health` 返回 `{"code":0,...}`。
-
-**首次灌一次种子数据**（角色/权限/菜单/admin 账号，幂等可重复跑）：
-```bash
-cd /opt/admin-backend-test && docker compose -f docker-compose.deploy.yml exec app node dist/database/seeds/rbac.seed.js
-```
-
-## 5. 日常怎么用
-
-| 想干什么 | 怎么做 |
+| 事件 | 行为 |
 |---|---|
-| 日常开发 | `feature/xxx` 分支 → GitLab 提 MR → 合入 `develop` → 自动部署测试环境 |
-| 上预发 | `develop` 合入 `main` → 流水线出现手动按钮 ▶ `deploy:staging`，点一下才部署 |
-| 改了表结构 | 本地生成迁移文件（见 docs/conventions.md）随代码一起合入，容器启动自动执行 |
-| 看服务日志 | 服务器 `docker logs admin-app --tail 100` |
+| PR 到 main | 检查、构建、隔离 smoke；不推镜像、不部署 |
+| push main | 检查后推 GHCR；默认不部署 |
+| workflow_dispatch | 选择 main 且 `deploy=true` 才显式部署 |
+| 仓库 Actions variable `AUTO_DEPLOY_TEST=true` | 允许 push main 自动部署；首次 bootstrap 前保持 false／不设 |
 
-## 6. 常见问题
+部署 job 使用 Environment `test`，仅 main，权限只有 `contents:read`。main 的镜像 job 用 `GITHUB_TOKEN`＋`packages:write` 推包；不把服务器数据库密码给 PR。
 
-| 现象 | 原因/处理 |
-|---|---|
-| 流水线一直 pending | Runner 没注册成功或离线：回第 2.4 步；服务器上 `sudo gitlab-runner status` |
-| package 阶段 docker login 失败 | Runner 注册时没带 `--docker-privileged`，重新注册 |
-| deploy 阶段拉镜像 not found | 服务器没做第 2.7 步的 docker login，或 Registry 地址/端口对不上 |
-| 健康检查失败 | `docker logs admin-app --tail 50`：大概率 .env 里 DB 密码和实际不一致 |
-| 接口 401 全挂 | 换过 JWT 密钥——所有已登录用户 token 失效，重新登录即可 |
+## 2. 实际检查与镜像
 
-## 7. 上预发前 checklist
+标准 `ubuntu-24.04` Runner，Node `24.19.0`（`.nvmrc`）、pnpm `11.20.0`。使用官方 npm registry 和冻结锁文件安装，不使用带 `--fix` 的 lint 快捷命令。
 
-独立目录（`/opt/admin-backend-staging`）+ 独立 .env（全新强密码、Redis 必须设密码、CORS_ORIGINS 设预发域名）；部署后**立即改掉 seed 的 admin 弱密码**；域名+HTTPS 挂外层 nginx/云负载均衡；`crontab` 加 PG 每日 `pg_dump` 备份。
+```bash
+pnpm exec eslint "{src,test}/**/*.ts"
+pnpm exec tsc --noEmit -p tsconfig.json
+pnpm test --runInBand
+pnpm build
+pnpm audit --prod --audit-level=high --registry=https://registry.npmjs.org
+python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+python3 -m unittest discover -s deploy -p 'test_*.py' -v
+```
+
+另检查 Compose 配置，Docker 镜像在独立临时 PG16／Redis7 中验证 migration、health、注册、登录、用户信息；不接真实测试服务器或运行其 seed。只有通过 smoke 的**同一镜像**会被推送，不二次构建替换产物。
+
+镜像标签为 `ghcr.io/liuxu-david/admin_system_backstage:sha-完整提交SHA`；运行 Summary 的 **Backend test image** 输出完整 `ghcr.io/liuxu-david/admin_system_backstage@sha256:64位小写十六进制`。实际部署只接受 digest，不接受 tag／latest，不要与前端引用混用。
+
+仅 `linux/amd64`，服务器须为 x86_64；尚未实现 ARM 多架构。主机不需要安装 Node、pnpm、PM2 或构建 Runner。
+
+## 3. 服务器目录和秘密
+
+新测试统一使用本仓库 `deploy/compose.yml`、`.env.example`、`manage.py`，人工 SFTP 上传到固定 `/opt/admin-system-test/`。CI 不同步／覆盖这些文件，不支持 DEPLOY_DIR 自定义。
+
+四个服务：`web` → `app:3000` → `postgres:5432`／`redis:6379`；同一 Compose 网络，只发布 `127.0.0.1:8080`。默认用个人电脑 SSH 隧道 `127.0.0.1:18080` 访问。
+
+- 安装官方 Docker APT＋Compose 插件 2.20+ 或更新版本、Python 3；Python 只用于管理脚本。
+- `.env` 在服务器由模板复制，四个秘密独立生成，chmod 600；不要提交 GitHub、source／eval 或打印完整展开配置。
+- 工具按字面值读取 `.env`，受控传给 Compose；镜像单独保存为 `images.env`，不是秘密配置的一部分。
+- `APP_ENV=test`、`RUN_MIGRATIONS=true`、`SEED_SYNCHRONIZE=false` 固定在编排，test 仍只走 migration。
+- PG 初始化账号为超级用户，仅用于本隔离测试，不是生产最小权限设计。
+- 私有 GHCR 使用对两包均有 Read 的账号＋PAT classic `read:packages`，在同一部署用户下 `docker login --password-stdin`；不使用 sudo 登录另一账号。
+
+## 4. 首次启动、seed 与发布命令
+
+在 main 成功构建两镜像、配置服务器 `.env` 和只读 GHCR 登录后，服务器部署用户执行：
+
+```bash
+read -r -p "后端完整 digest: " BACKEND_IMAGE
+read -r -p "前端完整 digest: " FRONTEND_IMAGE
+python3 /opt/admin-system-test/manage.py bootstrap "$BACKEND_IMAGE" "$FRONTEND_IMAGE"
+python3 /opt/admin-system-test/manage.py status
+python3 /opt/admin-system-test/manage.py check
+python3 /opt/admin-system-test/manage.py seed
+```
+
+bootstrap 失败先定位后可重试；成功后不再允许 bootstrap。seed 只在交互终端执行，显示警告后直接运行，不自动 CI、不另外等待输入确认；输出初始凭据须保密。随即通过 SSH 隧道登录并在用户管理修改默认密码。不要执行开发 `pnpm seed`。
+
+日常命令（替换 IMAGE 为本仓库成功 Summary 的完整 digest）：
+
+```bash
+python3 /opt/admin-system-test/manage.py deploy backend "$IMAGE"
+python3 /opt/admin-system-test/manage.py backup
+python3 /opt/admin-system-test/manage.py rollback backend --confirm-schema-compatible
+```
+
+deploy／rollback 需要已有成功 bootstrap。后端更新先拉取／备份 PG，再重建 app 和 web，避免 Nginx 使用旧 IP。跨仓库 fcntl 锁冲突直接拒绝，等前一操作结束并核对状态再重试。历史保存到 `release-history.json`。
+
+回滚只回退应用，**不恢复数据库**；参数表示操作者已经确认结构兼容。失败可能已有容器替换／迁移，不伪称自动回滚；`images.env` 只是期望状态，结合 status 的实际容器与历史看。
+
+## 5. 自动 SSH 配置
+
+两仓 GitHub Environment **test** 只允许 main；可用时设置审批。环境 Variables：`DEPLOY_HOST`（私网 IPv4／DNS）、`DEPLOY_PORT`、`DEPLOY_USER`、`USE_TAILSCALE`、`TAILSCALE_TAGS=tag:ci`。Secrets：`DEPLOY_SSH_KEY`、`DEPLOY_KNOWN_HOSTS`；启用 Tailscale 时另加 `TS_OAUTH_CLIENT_ID`、`TS_OAUTH_SECRET`。
+
+只有 `USE_TAILSCALE=true` 启用官方 Action v4.2.0 OAuth。服务器先用正常账号接入，OAuth 要 **auth_keys Write**、拥有或匹配 tag:ci，ACL 仅允许 CI 到服务器 SSH，不覆盖整个已有策略；不需要 `id-token:write`。不启用时须自备安全可达 SSH 通道，不默认开放全公网。详见 [官方要求](https://github.com/tailscale/github-action/blob/v4.2.0/README.md)。
+
+CI 公钥追加到部署用户 authorized_keys；私钥交给 Secret。ssh-keyscan 只采集主机公钥，须通过云控制台对比 SHA256 指纹后才保存 known_hosts，不关闭校验。完整安装／核验步骤见长手册。
+
+`AUTO_DEPLOY_TEST` 是**仓库级**变量，不是仅放环境的变量。先手动 main `deploy=true` 验收，再按需开启自动。
+
+## 6. 运维与验证边界
+
+推荐 `manage.py status/check/backup`；日志在服务器可用 `docker logs --tail=100 admin-system-test-app-1`。手工 Compose 默认不读 images.env，不要误用普通 `docker compose up`。
+
+旧 `docker-compose.deploy.yml`、backup-db.sh／restore-db.sh 已删除；两仓旧 `.gitlab-ci.yml` 已移除。不要删卷恢复；备份需异地副本及隔离恢复演练。四容器限制合计约1280MiB，不保证2GB容量；单实例发布可短暂中断。
+
+本机已通过双方类型／build、后端29测试；eslint 0error／104既有warning。生产依赖 audit high 门槛通过，后端仍3 moderate，前端0漏洞。actionlint／Compose静态检查、客户端mock测试后端9／前端8通过。管理工具50项中49实跑、1项Windows真实flock跳过。
+
+真实独立 PG16／Redis7＋宿主Node24编译产物的迁移／登录链路通过，**不是新镜像验证**。双端 Docker build 在 Docker Hub匿名token网络请求超时；镜像smoke、GitHub Actions、GHCR及真实服务器发布未实际完成。后续须用户跑绿，免费额度／私有包权限也须实际账户确认。

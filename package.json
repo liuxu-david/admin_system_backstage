@@ -32,8 +32,8 @@
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/mapped-types": "^2.1.1",
     "@nestjs/passport": "^11.0.5",
-    "@nestjs/platform-express": "^11.0.1",
-    "@nestjs/swagger": "^11.4.6",
+    "@nestjs/platform-express": "^11.2.6",
+    "@nestjs/swagger": "^11.4.7",
     "@nestjs/typeorm": "^11.0.3",
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
@@ -110,7 +110,8 @@
       "node_modules/(?!uuid)"
     ]
   },
+  "packageManager": "pnpm@11.20.0",
   "engines": {
-    "node": ">=20.11.0"
+    "node": ">=24.19.0 <25"
   }
 }

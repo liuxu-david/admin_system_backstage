@@ -44,40 +44,43 @@ docker exec -it nest-redis redis-cli
 ```
 进去后常用：`KEYS *`（看所有 key）、`SMEMBERS user:perms:用户id`（看某人权限缓存）、`DEL user:menus:用户id`（删一个缓存）、`FLUSHDB`（清空本库全部缓存，改库后常用）。
 
-## 3. 部署环境（测试/预发）：你要做什么
+## 3. 新测试部署：统一四容器，不单独安装数据库
 
-**不用单独安装！** 部署编排 `docker-compose.deploy.yml` 自带 postgres/redis 服务，和后端一起拉起。你唯一要做的是在部署目录的 `.env` 里填这几个变量：
+详细步骤见 [deploy/README.md](../deploy/README.md)。只使用本仓库 `deploy/compose.yml`、`.env.example`、`manage.py`，人工上传到固定 `/opt/admin-system-test/`。旧 `docker-compose.deploy.yml` 与旧备份脚本已删除，**不要混用旧容器名、旧卷或旧备份脚本**。
 
-| 变量 | 干什么 | 怎么定 |
-|---|---|---|
-| DB_USERNAME | PG 管理员账号 | 固定 `postgres` |
-| DB_PASSWORD | PG 密码 | 服务器上执行 `openssl rand -hex 16` 生成强密码 |
-| DB_NAME | 库名 | 如 `nest_backend_test`（首次启动自动创建） |
-| REDIS_PASSWORD | Redis 密码 | 测试可不填；**预发/生产必填**（填了 Redis 自动开启密码校验） |
+服务器安装官方 Docker Engine、Compose 插件 2.20+ 或更新版本及 Python 3；不装业务 Node／pnpm，不执行构建。PG16、Redis7、后端 app、前端 web 在同一网络；仅 `127.0.0.1:8080` 发布到宿主，数据库端口不开放公网。
 
-安全设计（已做好，知悉即可）：部署环境 PG **不对外暴露端口**（只有后端容器内网能连），外面想连得改 compose 里的 ports 注释；Redis 同理。
-
-**改配置生效方式**：改 `.env` 后在部署目录执行 `docker compose -f docker-compose.deploy.yml up -d`（会重建相关容器）。
-
-## 4. 日常运维速查（部署环境，`/opt/admin-backend-test` 目录下执行）
-
-| 场景 | 命令 |
+| 服务器 `.env` 字段 | 要求 |
 |---|---|
-| 看三个容器状态 | `docker ps` |
-| 看后端日志 | `docker logs admin-app --tail 100` |
-| 只重启后端（不动数据库） | `docker compose -f docker-compose.deploy.yml restart app` |
-| 进 PG 查数据 | `docker exec -it admin-postgres psql -U postgres -d nest_backend_test` |
-| 备份 PG（手动） | `docker exec admin-postgres pg_dump -U postgres nest_backend_test > backup_$(date +%m%d).sql` |
-| 恢复备份 | `docker exec -i admin-postgres psql -U postgres nest_backend_test < backup_xxxx.sql` |
-| 清 Redis 缓存 | `docker exec admin-redis redis-cli FLUSHDB`（设了密码加 `-a 密码`） |
-| 定时自动备份 | `crontab -e` 加：`0 3 * * * cd /opt/admin-backend-test && docker exec admin-postgres pg_dump -U postgres nest_backend_test > /root/backup/$(date +\%m\%d).sql` |
+| DB_USERNAME／DB_NAME | 首次可保留模板 `admin_test`／`admin_system_test`；初始化角色为超级用户，仅用于隔离测试 |
+| DB_PASSWORD／REDIS_PASSWORD | 两组独立强随机值，**测试环境也必须设置** |
+| JWT_ACCESS_SECRET／JWT_REFRESH_SECRET | 另外两组不同随机值，每项分别用 `openssl rand -hex 32` 生成 |
+| CORS_ORIGINS | 默认 `http://127.0.0.1:18080`，用于本地 SSH 隧道 |
 
-## 5. 常见坑（全是本项目真实踩过的）
+`.env` 仅服务器存储、权限600，不 source／eval；镜像另存工具生成的 `images.env`。工具按字面值传入 Compose，不手工执行默认 `docker compose up`。`APP_ENV=test` 仍只跑 migration，首次 seed 须交互终端，随后隧道登录并改默认密码。
 
-| 现象 | 原因 / 解法 |
+## 4. 日常运维（服务器，同一部署用户）
+
+| 场景 | 命令／操作 |
 |---|---|
-| 改了库里的权限/菜单，页面不变 | Redis 缓存 30 分钟。走管理界面改会**自动清缓存**；直接改库必须手动 `FLUSHDB`（见上表） |
-| 后端起不来，日志报 connection refused / 密码错误 | PG 容器没起（`docker ps` 看），或 `.env` 的 DB_PASSWORD 和创建容器时不一致 |
-| Redis 报 NOAUTH | Redis 设了密码但 `.env` 的 REDIS_PASSWORD 没填/填错，两边必须一致 |
-| 想清空重来 | `docker compose -f docker-compose.deploy.yml down -v` 删数据卷 → `up -d` → 重跑 seed（测试环境专用招） |
-| 备份文件越来越大 | PG 备份含全部数据属正常；保留最近 7 天即可：`find /root/backup -mtime +7 -delete` |
+| 看期望版本、历史成功版本及实际容器 | `python3 /opt/admin-system-test/manage.py status` |
+| 检查前端与代理 health | `python3 /opt/admin-system-test/manage.py check`；仍需人工登录验收 |
+| 看后端日志 | `docker logs --tail=100 admin-system-test-app-1`（分享前脱敏） |
+| 备份 PG | `python3 /opt/admin-system-test/manage.py backup`，保留输出的 `.dump` 文件 |
+| 发布后端 | `python3 /opt/admin-system-test/manage.py deploy backend "完整后端digest"` |
+| 回退后端镜像 | `python3 /opt/admin-system-test/manage.py rollback backend --confirm-schema-compatible` |
+
+后端发布先备份PG，再重建app和web；跨仓库锁冲突立即拒绝，等前一操作结束并核对状态再重试。回滚**不恢复数据库**，必须先确认旧应用兼容当前结构。
+
+备份需异地副本与隔离恢复演练，另备份实际上传文件和加密配置；没有自动定时备份／恢复保证。旧 `backup-db.sh`／`restore-db.sh` 已删除，恢复演练使用 `manage.py backup` 产物；不要运行删库脚本或 `down -v` 来排错。
+
+## 5. 部署常见坑
+
+| 现象 | 原因／处理 |
+|---|---|
+| 改库权限／菜单后页面不变 | 优先走管理接口自动失效缓存；直接改库需评估对应 key，部署环境不要照搬本地 FLUSHDB |
+| 数据库密码错误 | 已初始化卷的账号密码不会随 `.env` 自动改变；需数据库内改密与应用配置协调 |
+| Redis NOAUTH | `.env` 强密码与实际服务不一致；不要为了修复而取消认证 |
+| 发布失败但 images.env 已变 | 这是期望版本，不是成功证明；结合status实际容器和历史，不能假称自动回滚 |
+| 数据像清空了 | 先检查项目名、DB_NAME、旧／新数据卷，别删卷再bootstrap |
+| 内存不足、备份占满磁盘 | 四容器限制约1280MiB不是容量保证；观察实际用量、备份验证后归档，不自动删全部旧文件 |

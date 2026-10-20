@@ -5,8 +5,13 @@ node_modules/
 dist/
 
 # Environment files with secrets
+.env
 .env.local
 .env.*.local
+*.pem
+*.key
+__pycache__/
+*.pyc
 
 # IDE
 .idea/

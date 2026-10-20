@@ -1,0 +1,162 @@
+name: Backend CI and test deployment
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy this checked main revision to the test server
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-test-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+      - name: Install pinned package manager and dependencies
+        run: |
+          npm install --global pnpm@11.20.0
+          pnpm install --frozen-lockfile --registry=https://registry.npmjs.org
+      - name: Lint, typecheck, unit tests, build, dependency audit
+        run: |
+          pnpm exec eslint "{src,test}/**/*.ts"
+          pnpm exec tsc --noEmit -p tsconfig.json
+          pnpm test --runInBand
+          pnpm build
+          pnpm audit --prod --audit-level=high --registry=https://registry.npmjs.org
+      - name: Test deployment tooling without touching a server
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+          python3 -m unittest discover -s deploy -p 'test_*.py' -v
+      - name: Validate the test Compose configuration
+        env:
+          DB_PASSWORD: ci-placeholder-password
+          REDIS_PASSWORD: ci-placeholder-password
+          JWT_ACCESS_SECRET: ci-placeholder-access-secret
+          JWT_REFRESH_SECRET: ci-placeholder-refresh-secret
+          BACKEND_IMAGE: ghcr.io/example/backend:ci
+          FRONTEND_IMAGE: ghcr.io/example/frontend:ci
+        run: docker compose --env-file deploy/.env.example -f deploy/compose.yml config --quiet
+      - name: Build and smoke-test pull requests without registry write permissions
+        if: github.event_name == 'pull_request'
+        env:
+          LOCAL_IMAGE: admin-backend-pr:${{ github.sha }}
+        run: |
+          docker build --tag "$LOCAL_IMAGE" .
+          python3 .github/scripts/smoke.py "$LOCAL_IMAGE"
+
+  image:
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      image: ${{ steps.reference.outputs.image }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build an isolated test image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          tags: admin-backend-ci:${{ github.sha }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=backend-test
+          cache-to: type=gha,mode=max,scope=backend-test
+      - name: Check image against disposable PostgreSQL and Redis
+        env:
+          LOCAL_IMAGE: admin-backend-ci:${{ github.sha }}
+        run: python3 .github/scripts/smoke.py "$LOCAL_IMAGE"
+      - name: Compute registry name
+        id: name
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: printf 'repository=ghcr.io/%s\n' "${REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - name: Authenticate image publisher
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the exact image that passed the smoke test
+        id: publish
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          LOCAL_IMAGE: admin-backend-ci:${{ github.sha }}
+          REMOTE_IMAGE: ${{ steps.name.outputs.repository }}:sha-${{ github.sha }}
+        run: |
+          docker tag "$LOCAL_IMAGE" "$REMOTE_IMAGE"
+          docker push "$REMOTE_IMAGE"
+          reference=$(docker image inspect --format '{{index .RepoDigests 0}}' "$REMOTE_IMAGE")
+          digest="${reference##*@}"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+      - name: Record immutable image reference
+        id: reference
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          REPOSITORY: ${{ steps.name.outputs.repository }}
+          DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          printf 'image=%s@%s\n' "$REPOSITORY" "$DIGEST" >> "$GITHUB_OUTPUT"
+          printf '### Backend test image\n\n`%s@%s`\n\nUse this complete reference for the first bootstrap.\n' "$REPOSITORY" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    needs: image
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'workflow_dispatch' && inputs.deploy) ||
+       (github.event_name == 'push' && vars.AUTO_DEPLOY_TEST == 'true'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    environment: test
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Join restricted deployment network
+        if: vars.USE_TAILSCALE == 'true'
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: ${{ vars.TAILSCALE_TAGS || 'tag:ci' }}
+      - name: Deploy only the backend component
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          IMAGE_REF: ${{ needs.image.outputs.image }}
+        run: python3 .github/scripts/deploy.py backend

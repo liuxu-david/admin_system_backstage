@@ -47,6 +47,7 @@ src/
 | 要做的事 | 读 |
 |---|---|
 | 动权限 / 角色 / 菜单任何东西 | `docs/rbac.md` |
+| 要用缓存 / 清缓存 / 动 redis-keys | `docs/redis.md` + `docs/rbac.md` |
 | 新增接口、模块、DTO | `docs/conventions.md` |
 | 理解架构 / 排查请求问题 | `docs/architecture.md` |
 | PG / Redis 是什么、怎么连怎么运维 | `docs/infra.md` |

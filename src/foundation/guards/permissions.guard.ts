@@ -47,13 +47,13 @@ export class PermissionsGuard implements CanActivate {
 
     if (hasPermReq) {
       const userPerms = await this.permissionService.getUserPermissions(userId);
-      const ok = required!.some((code: string) => userPerms.includes(code));
+      const ok = required.some((code: string) => userPerms.includes(code));
       if (!ok) throw new BusinessException(ErrorCode.RBAC_PERMISSION_DENIED);
     }
 
     if (hasRoleReq) {
       const userRoles = await this.permissionService.getUserRoleCodes(userId);
-      const ok = requiredRoles!.some((code: string) => userRoles.includes(code));
+      const ok = requiredRoles.some((code: string) => userRoles.includes(code));
       if (!ok) throw new BusinessException(ErrorCode.RBAC_PERMISSION_DENIED);
     }
 

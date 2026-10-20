@@ -6,9 +6,16 @@ test
 .env.*
 !.env.example
 *.log
+*.pem
+*.key
 .git
 .idea
 .vscode
 .zcode
 uploads
 docker-compose.yml
+deploy
+.github
+docs
+__pycache__
+*.pyc

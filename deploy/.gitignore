@@ -1,0 +1,9 @@
+/.env
+/images.env
+/release-history.json
+/backups/
+/.deploy.lock
+/__pycache__/
+/*.pyc
+/.images.env.*
+/.release-history.json.*

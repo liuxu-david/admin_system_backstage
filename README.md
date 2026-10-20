@@ -27,8 +27,17 @@ pnpm start:dev                        # → http://localhost:3000 ，Swagger: /a
 - 权限系统 → [docs/rbac.md](docs/rbac.md)
 - 开发约定 → [docs/conventions.md](docs/conventions.md)
 - 环境变量 → [docs/env.md](docs/env.md)
-- 部署 CI/CD → [docs/ci-cd.md](docs/ci-cd.md)
+- 部署 CI/CD → [docs/ci-cd.md](docs/ci-cd.md)；亲手部署教程 → [deploy/README.md](deploy/README.md)
+- Redis 缓存（哪些用/不用/怎么用）→ [docs/redis.md](docs/redis.md)
 
 ## 环境要求
 
-Node ≥ 20.11（见 .nvmrc；Node 18 需 main.ts 的 crypto 兜底）· pnpm · Docker（PG/Redis）
+Node `24.19.0`（见 `.nvmrc`）· pnpm `11.20.0` · Docker（本地 PG/Redis）
+
+## 测试发布
+
+GitHub Actions 使用托管 Runner 检查、构建并推送 GHCR；服务器不做构建。PR 不发布；push main 默认只推镜像；首次人工 bootstrap、seed、改密后，才手动 `workflow_dispatch deploy=true`。仓库变量 `AUTO_DEPLOY_TEST=true` 可显式开启后续 main 自动部署。
+
+统一配置来源为 `deploy/`，服务器固定 `/opt/admin-system-test/`，仅部署 Summary 输出的完整后端／前端 digest。SSH 隧道访问 `http://127.0.0.1:18080`，不要求域名。开发用 `pnpm seed` 不能照搬到服务器，应运行手册中的 `manage.py seed`。
+
+本地实现尚不等于云端启用；当前工作分支待用户审核、提交、推送、PR。双端 Docker 镜像构建受 Docker Hub 认证网络超时阻塞，GitHub／GHCR／真实服务器发布未执行；具体本地验证结果见部署手册。

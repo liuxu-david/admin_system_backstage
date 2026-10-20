@@ -39,7 +39,10 @@ export class CreateMenuDto {
   @MaxLength(255)
   path?: string;
 
-  @ApiPropertyOptional({ description: "前端组件路径（对应 views 目录）", example: "system/user/index" })
+  @ApiPropertyOptional({
+    description: "前端组件路径（对应 views 目录）",
+    example: "system/user/index",
+  })
   @IsString()
   @IsOptional()
   @MaxLength(255)

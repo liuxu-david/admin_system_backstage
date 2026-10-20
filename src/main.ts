@@ -14,7 +14,7 @@ import { ResponseInterceptor } from "./foundation/interceptors/response.intercep
 // 而 globalThis.crypto 在 Node 19+ 才默认暴露。低版本（如 18）注入 node 内置 crypto 模块。 ──
 const __g = globalThis as unknown as { crypto?: { randomUUID?: unknown } };
 if (typeof __g.crypto?.randomUUID !== "function") {
-  __g.crypto = nodeCrypto as never;
+  __g.crypto = nodeCrypto;
 }
 
 async function bootstrap() {

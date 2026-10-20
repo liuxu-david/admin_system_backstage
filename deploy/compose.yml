@@ -1,0 +1,126 @@
+# Server source of truth. Install this directory in /opt/admin-system-test/.
+# manage.py loads literal .env values plus images.env; no server-side builds.
+name: admin-system-test
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    mem_limit: 384m
+    cpus: "0.60"
+    pids_limit: 100
+    environment:
+      POSTGRES_DB: ${DB_NAME:?Set DB_NAME in .env}
+      POSTGRES_USER: ${DB_USERNAME:?Set DB_USERNAME in .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+    command: ["postgres", "-c", "shared_buffers=96MB", "-c", "work_mem=2MB", "-c", "maintenance_work_mem=32MB", "-c", "max_connections=40"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    logging: *logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    mem_limit: 160m
+    cpus: "0.20"
+    pids_limit: 50
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    # Parameter expansion is quoted data, never eval/source. Drop privileges via
+    # the official entrypoint after expanding the password inside the container.
+    command: ["sh", "-c", "exec /usr/local/bin/docker-entrypoint.sh redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes --maxmemory 96mb --maxmemory-policy allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    logging: *logging
+
+  app:
+    image: ${BACKEND_IMAGE:?Run manage.py bootstrap with a backend digest}
+    restart: unless-stopped
+    init: true
+    mem_limit: 640m
+    cpus: "1.00"
+    pids_limit: 100
+    environment:
+      NODE_ENV: production
+      APP_ENV: test
+      APP_PORT: "3000"
+      APP_PREFIX: api
+      RUN_MIGRATIONS: "true"
+      SEED_SYNCHRONIZE: "false"
+      NODE_OPTIONS: "--max-old-space-size=384"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USERNAME: ${DB_USERNAME:?Set DB_USERNAME in .env}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      DB_NAME: ${DB_NAME:?Set DB_NAME in .env}
+      DB_LOGGING: "false"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      REDIS_DB: "0"
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Set JWT_ACCESS_SECRET in .env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in .env}
+      JWT_ACCESS_EXPIRES_IN: "15m"
+      JWT_REFRESH_EXPIRES_IN: "7d"
+      CORS_ORIGINS: ${CORS_ORIGINS:?Set CORS_ORIGINS in .env}
+      FILE_STORAGE_DRIVER: local
+      FILE_STORAGE_LOCAL_DIR: /app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(async r=>{const b=await r.json();if(!r.ok||(b.code??0)!==0||(b.data??b).status!=='ok')process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *logging
+
+  web:
+    image: ${FRONTEND_IMAGE:?Run manage.py bootstrap with a frontend digest}
+    restart: unless-stopped
+    mem_limit: 96m
+    cpus: "0.20"
+    pids_limit: 50
+    environment:
+      BACKEND_HOST: app
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+    logging: *logging
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads:
